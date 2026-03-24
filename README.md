@@ -5,6 +5,17 @@ Real-time visualization of Claude Code multi-agent workflows as an interactive, 
 ![VS Code](https://img.shields.io/badge/VS%20Code-Extension-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+### Graph View — Live Mode
+![Graph View](assets/graph-view.png)
+
+### Chat Transcript
+![Chat View](assets/chat-view.png)
+
+### Files Touched
+![Files View](assets/files-view.png)
+
+> A video demo is available at [`assets/agent-flow-demo.mp4`](assets/agent-flow-demo.mp4).
+
 ## Features
 
 - **Live Mode** — Watch agents work in real-time with automatic file polling
