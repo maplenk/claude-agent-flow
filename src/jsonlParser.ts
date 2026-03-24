@@ -3,7 +3,7 @@ import * as path from 'path';
 
 export interface GraphNode {
   id: string;
-  type: 'orchestrator' | 'user' | 'assistant' | 'agent' | 'tool';
+  type: 'orchestrator' | 'user' | 'assistant' | 'agent' | 'tool' | 'thinking';
   label: string;
   detail: string;
   timestamp: string;
@@ -61,6 +61,7 @@ interface JsonlEntry {
 interface ContentBlock {
   type: string;
   text?: string;
+  thinking?: string;
   name?: string;
   input?: Record<string, unknown>;
   id?: string;
@@ -196,6 +197,18 @@ export function parseJsonlFile(filePath: string): ParsedSession {
               processToolBlock(block, ts, lastNodeId || orchestratorId, 'orchestrator', orchestratorId,
                 nodes, edges, touchedFiles, nodeCounter);
             }
+          }
+
+          // Thinking blocks
+          if (block.type === 'thinking' && (block.thinking || block.text)) {
+            const thinkText = block.thinking || block.text || '';
+            const truncated = thinkText.length > 100 ? thinkText.slice(0, 97) + '...' : thinkText;
+            const thinkNodeId = `n_${nodeCounter.v++}`;
+            nodes.push({
+              id: thinkNodeId, type: 'thinking', label: truncated,
+              detail: thinkText, timestamp: ts, parentId: lastNodeId || orchestratorId,
+            });
+            edges.push({ from: lastNodeId || orchestratorId, to: thinkNodeId });
           }
 
           // Assistant text mentioning agent spawns

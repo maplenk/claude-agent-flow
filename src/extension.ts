@@ -200,6 +200,7 @@ body { background: var(--bg-deep); color: var(--text); font-family: var(--font);
 .tl-dot.tool { background: var(--tool-cyan); }
 .tl-dot.agent { background: var(--accent); }
 .tl-dot.orchestrator { background: var(--accent); }
+.tl-dot.thinking { background: #94a3b8; }
 .tl-handle { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; transform: translate(-50%, -50%); box-shadow: 0 0 8px var(--accent-glow); pointer-events: none; z-index: 2; transition: left 0.05s linear; }
 .tl-handle.replay-active { background: var(--replay-purple); box-shadow: 0 0 10px rgba(168,85,247,0.5); }
 
@@ -772,7 +773,7 @@ function initialLayout(rawNodes, rawEdges) {
 }
 
 function getNodeRadius(node) {
-  switch (node.type) { case 'orchestrator': return 38; case 'agent': return 26; case 'user': return 18; case 'tool': return 13; default: return 13; }
+  switch (node.type) { case 'orchestrator': return 38; case 'agent': return 26; case 'user': return 18; case 'thinking': return 10; case 'tool': return 13; default: return 13; }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -894,6 +895,18 @@ function render() {
     }
     drawNode(node, node === hoveredNode, entranceScale);
   }
+  // Draw text bubbles on top of nodes
+  for (const node of nodes) {
+    if (node.type === 'user' || node.type === 'thinking' || node.type === 'assistant') {
+      let entranceScale = 1;
+      if (replay.active && node.timestamp) {
+        const nodeMs = new Date(node.timestamp).getTime();
+        const age = cursorAbsMs - nodeMs;
+        if (age >= 0 && age < 600) entranceScale = 0.3 + 0.7 * Math.min(1, age / 600);
+      }
+      if (entranceScale > 0.6) drawTextBubble(node);
+    }
+  }
   ctx.restore();
 }
 
@@ -909,9 +922,21 @@ function drawStarField() {
 
 function drawEdge(from, to) {
   const grad = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
-  grad.addColorStop(0, nodeColor(from, 0.25)); grad.addColorStop(1, nodeColor(to, 0.25));
-  ctx.strokeStyle = grad; ctx.lineWidth = 1.2; ctx.setLineDash([5, 4]);
-  ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke(); ctx.setLineDash([]);
+  grad.addColorStop(0, nodeColor(from, 0.5)); grad.addColorStop(1, nodeColor(to, 0.5));
+  // Neon glow layer
+  ctx.save();
+  ctx.shadowColor = nodeColor(to, 0.6);
+  ctx.shadowBlur = 12;
+  ctx.strokeStyle = grad; ctx.lineWidth = 1.8; ctx.setLineDash([5, 4]);
+  ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+  // Bright core line
+  ctx.shadowBlur = 0;
+  const coreGrad = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
+  coreGrad.addColorStop(0, nodeColor(from, 0.15)); coreGrad.addColorStop(1, nodeColor(to, 0.15));
+  ctx.strokeStyle = coreGrad; ctx.lineWidth = 0.6;
+  ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 
 function drawNode(node, isHovered, scale) {
@@ -919,24 +944,113 @@ function drawNode(node, isHovered, scale) {
   const r = node.radius * scale;
   const color = nodeColor(node, 1);
   const pulse = node.type === 'orchestrator' ? (0.8 + 0.2 * Math.sin(time * 0.04)) : 1;
-  ctx.shadowColor = nodeColor(node, 0.35); ctx.shadowBlur = (isHovered ? 35 : 16) * pulse;
-  if (node.type === 'orchestrator' || node.type === 'agent') {
+
+  if (node.type === 'orchestrator') {
+    // Strong cyan aura — multiple layered glows
+    ctx.save();
+    const auraR = r * 2.2;
+    const auraGrad = ctx.createRadialGradient(x, y, r * 0.5, x, y, auraR);
+    auraGrad.addColorStop(0, 'rgba(6,182,212,0.18)');
+    auraGrad.addColorStop(0.5, 'rgba(6,182,212,0.08)');
+    auraGrad.addColorStop(1, 'rgba(6,182,212,0)');
+    ctx.fillStyle = auraGrad;
+    ctx.beginPath(); ctx.arc(x, y, auraR, 0, Math.PI * 2); ctx.fill();
+    // Second pulse layer
+    const pulseAura = 0.12 + 0.06 * Math.sin(time * 0.03);
+    const auraGrad2 = ctx.createRadialGradient(x, y, r, x, y, auraR * 1.3);
+    auraGrad2.addColorStop(0, 'rgba(6,182,212,' + pulseAura + ')');
+    auraGrad2.addColorStop(1, 'rgba(6,182,212,0)');
+    ctx.fillStyle = auraGrad2;
+    ctx.beginPath(); ctx.arc(x, y, auraR * 1.3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    ctx.shadowColor = 'rgba(6,182,212,0.5)'; ctx.shadowBlur = isHovered ? 50 : 30;
     drawHexagon(x, y, r * pulse, color, isHovered);
-    if (node.type === 'orchestrator') {
-      ctx.shadowBlur = 0; ctx.fillStyle = color;
-      ctx.font = Math.round(r * 0.55) + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('⬡', x, y - 1);
+
+    // Spinning asterisk/star icon
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.translate(x, y);
+    ctx.rotate(time * 0.02);
+    ctx.fillStyle = color;
+    const starR = r * 0.35;
+    const spokes = 6;
+    ctx.beginPath();
+    for (let i = 0; i < spokes; i++) {
+      const a = (Math.PI * 2 / spokes) * i;
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(a) * starR, Math.sin(a) * starR);
     }
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+    // Center dot
+    ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+    ctx.restore();
+
+    // Token usage progress bar below orchestrator
+    if (sessionData) {
+      ctx.save();
+      ctx.shadowBlur = 0;
+      const barW = r * 2.4, barH = 5;
+      const barX = x - barW / 2, barY = y + r + 18;
+      const totalTokens = sessionData.totalTokens || 0;
+      const maxTokens = 1000000;
+      const pct = Math.min(1, totalTokens / maxTokens);
+      // Bar background
+      ctx.fillStyle = 'rgba(30,40,60,0.8)';
+      ctx.beginPath();
+      ctx.roundRect(barX, barY, barW, barH, 2.5);
+      ctx.fill();
+      // Bar fill with glow
+      if (pct > 0) {
+        ctx.shadowColor = 'rgba(6,182,212,0.6)'; ctx.shadowBlur = 6;
+        const fillGrad = ctx.createLinearGradient(barX, barY, barX + barW * pct, barY);
+        fillGrad.addColorStop(0, 'rgba(6,182,212,0.9)');
+        fillGrad.addColorStop(1, 'rgba(59,130,246,0.9)');
+        ctx.fillStyle = fillGrad;
+        ctx.beginPath();
+        ctx.roundRect(barX, barY, barW * pct, barH, 2.5);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+      // Token label
+      const tokenLabel = formatTokens(totalTokens) + ' / 1000k';
+      ctx.font = '9px "Segoe UI",system-ui,sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillStyle = 'rgba(148,163,184,0.8)';
+      ctx.fillText(tokenLabel, x, barY + barH + 3);
+      ctx.restore();
+    }
+  } else if (node.type === 'agent') {
+    ctx.shadowColor = nodeColor(node, 0.45); ctx.shadowBlur = isHovered ? 35 : 20;
+    drawHexagon(x, y, r * pulse, color, isHovered);
+  } else if (node.type === 'thinking') {
+    // Small gray dot for thinking nodes
+    ctx.shadowColor = nodeColor(node, 0.3); ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = isHovered ? color : 'rgba(10,14,26,0.8)'; ctx.fill();
+    ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.stroke();
   } else {
+    ctx.shadowColor = nodeColor(node, 0.35); ctx.shadowBlur = (isHovered ? 35 : 16) * pulse;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fillStyle = isHovered ? color : 'rgba(10,14,26,0.8)'; ctx.fill();
     ctx.strokeStyle = color; ctx.lineWidth = isHovered ? 2.5 : 1.2; ctx.stroke();
   }
   ctx.shadowBlur = 0;
-  if (scale > 0.5) {  // only draw labels when visible enough
+
+  // Draw label below node (skip for orchestrator — it has the token bar)
+  if (scale > 0.5 && node.type !== 'orchestrator') {
     ctx.font = '11px "Segoe UI",system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.fillStyle = isHovered ? '#fff' : 'rgba(226,232,240,0.8)';
     ctx.fillText(truncText(ctx, node.label || node.type, 150), x, y + r + 5);
+  }
+  // Orchestrator label below token bar
+  if (scale > 0.5 && node.type === 'orchestrator') {
+    ctx.font = '12px "Segoe UI",system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillStyle = isHovered ? '#fff' : 'rgba(226,232,240,0.8)';
+    ctx.fillText('orchestrator', x, y + r + 34);
   }
 }
 
@@ -947,12 +1061,109 @@ function drawHexagon(x, y, r, color, isHovered) {
   ctx.strokeStyle = color; ctx.lineWidth = isHovered ? 3 : 2; ctx.setLineDash([6,3]); ctx.stroke(); ctx.setLineDash([]);
 }
 
+function drawTextBubble(node) {
+  // Only draw bubbles for user, thinking, and assistant text nodes
+  if (node.type !== 'user' && node.type !== 'thinking' && node.type !== 'assistant') return;
+  const text = node.label || '';
+  if (!text || text.length < 2) return;
+
+  const x = node.x, y = node.y, r = node.radius;
+  ctx.save();
+  ctx.shadowBlur = 0;
+
+  // Bubble config by type
+  let bgColor, borderColor, textColor, headerText, headerColor;
+  if (node.type === 'user') {
+    bgColor = 'rgba(245,158,11,0.12)';
+    borderColor = 'rgba(245,158,11,0.4)';
+    textColor = 'rgba(245,158,11,0.9)';
+    headerText = 'USER';
+    headerColor = 'rgba(245,158,11,1)';
+  } else if (node.type === 'thinking') {
+    bgColor = 'rgba(148,163,184,0.1)';
+    borderColor = 'rgba(148,163,184,0.3)';
+    textColor = 'rgba(148,163,184,0.85)';
+    headerText = 'THINKING';
+    headerColor = 'rgba(148,163,184,1)';
+  } else {
+    bgColor = 'rgba(6,182,212,0.1)';
+    borderColor = 'rgba(6,182,212,0.35)';
+    textColor = 'rgba(6,182,212,0.85)';
+    headerText = 'CLAUDE';
+    headerColor = 'rgba(6,182,212,1)';
+  }
+
+  // Position bubble to the right of the node
+  const bubbleX = x + r + 14;
+  const bubbleY = y - 12;
+  const maxW = 180;
+  const padding = 8;
+
+  // Measure & wrap text
+  ctx.font = '10px "Segoe UI",system-ui,sans-serif';
+  const displayText = text.length > 80 ? text.slice(0, 77) + '...' : text;
+  const words = displayText.split(' ');
+  const lines = [];
+  let currentLine = '';
+  for (const word of words) {
+    const testLine = currentLine ? currentLine + ' ' + word : word;
+    if (ctx.measureText(testLine).width > maxW - padding * 2) {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  if (lines.length > 3) { lines.length = 3; lines[2] = lines[2].slice(0, -3) + '...'; }
+
+  const lineH = 13;
+  const headerH = 14;
+  const bubbleH = headerH + lines.length * lineH + padding * 2;
+  const bubbleW = maxW;
+
+  // Draw bubble background
+  ctx.fillStyle = bgColor;
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(bubbleX, bubbleY, bubbleW, bubbleH, 6);
+  ctx.fill();
+  ctx.stroke();
+
+  // Draw connecting line from node to bubble
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth = 0.8;
+  ctx.setLineDash([3, 2]);
+  ctx.beginPath();
+  ctx.moveTo(x + r + 2, y);
+  ctx.lineTo(bubbleX, bubbleY + bubbleH / 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Header
+  ctx.font = 'bold 8px "Segoe UI",system-ui,sans-serif';
+  ctx.fillStyle = headerColor;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(headerText, bubbleX + padding, bubbleY + padding);
+
+  // Body text
+  ctx.font = '10px "Segoe UI",system-ui,sans-serif';
+  ctx.fillStyle = textColor;
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], bubbleX + padding, bubbleY + padding + headerH + i * lineH);
+  }
+
+  ctx.restore();
+}
+
 function nodeColor(node, alpha) {
   switch (node.type) {
     case 'orchestrator': return 'rgba(245,158,11,'+alpha+')';
     case 'agent': return 'rgba(59,130,246,'+alpha+')';
     case 'user': return 'rgba(16,185,129,'+alpha+')';
     case 'tool': return 'rgba(6,182,212,'+alpha+')';
+    case 'thinking': return 'rgba(148,163,184,'+alpha+')';
     default: return 'rgba(226,232,240,'+alpha+')';
   }
 }
