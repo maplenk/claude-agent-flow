@@ -178,8 +178,8 @@ export function parseJsonlFile(filePath: string): ParsedSession {
         for (const block of contentBlocks) {
           // Tool calls
           if (block.type === 'tool_use' && block.name) {
-            // Task → subagent spawn
-            if (block.name === 'Task') {
+            // Task/Agent → subagent spawn
+            if (block.name === 'Task' || block.name === 'Agent') {
               const input = block.input as Record<string, unknown>;
               const agId = (input?.agentId as string) || block.id || `task_${nodeCounter.v}`;
               const agType = (input?.description as string) || (input?.prompt as string) || 'SubAgent';
@@ -301,7 +301,7 @@ function formatToolLabel(name: string, input?: Record<string, unknown>): string 
     case 'WebSearch': return `WebSearch: ${truncate(String(input.query || ''), 35)}`;
     case 'ToolSearch': return `ToolSearch: ${truncate(String(input.query || ''), 35)}`;
     case 'TodoWrite': return `TodoWrite`;
-    case 'Task': return `Task: ${truncate(String(input.description || input.prompt || ''), 35)}`;
+    case 'Task': case 'Agent': return `Agent: ${truncate(String(input.description || input.prompt || ''), 35)}`;
     default: return name;
   }
 }
