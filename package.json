@@ -1,0 +1,61 @@
+{
+  "name": "agent-flow",
+  "displayName": "Agent Flow",
+  "description": "Real-time visualization of Claude Code multi-agent workflows",
+  "version": "0.1.0",
+  "publisher": "queuebuster",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maplenk/claude-agent-flow"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent",
+    "visualization",
+    "workflow",
+    "graph"
+  ],
+  "categories": [
+    "Visualization"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentFlow.openPanel",
+        "title": "Agent Flow: Open Visualization",
+        "icon": "$(symbol-structure)"
+      },
+      {
+        "command": "agentFlow.selectSession",
+        "title": "Agent Flow: Select Session"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agent-flow",
+          "title": "Agent Flow",
+          "icon": "$(symbol-structure)"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.37",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.9.3"
+  }
+}
