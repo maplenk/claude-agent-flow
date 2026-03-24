@@ -96,6 +96,10 @@ Zero runtime dependencies. Only `@types/vscode`, `@types/node`, and `typescript`
 
 Contributions welcome. Please open an issue first to discuss what you'd like to change.
 
+## Inspiration
+
+Inspired by [this post](https://www.threads.com/@juiced69/post/DWOsYsSgX1J) by [@juiced69](https://www.threads.com/@juiced69).
+
 ## License
 
 [MIT](LICENSE)
