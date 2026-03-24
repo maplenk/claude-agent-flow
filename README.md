@@ -39,10 +39,12 @@ Claude Code stores every session as JSONL files at `~/.claude/projects/`. This e
 
 ## Installation
 
-### From VSIX
+### Download Release (Recommended)
 
+1. Go to [Releases](https://github.com/maplenk/claude-agent-flow/releases/latest)
+2. Download `agent-flow-0.1.0.vsix`
+3. Install:
 ```bash
-npx @vscode/vsce package
 code --install-extension agent-flow-0.1.0.vsix
 ```
 
@@ -50,7 +52,7 @@ code --install-extension agent-flow-0.1.0.vsix
 
 ```bash
 git clone https://github.com/maplenk/claude-agent-flow.git
-cd agent-flow
+cd claude-agent-flow
 npm install
 npm run compile
 ```
