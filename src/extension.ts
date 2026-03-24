@@ -709,14 +709,6 @@ function initialLayout(rawNodes, rawEdges) {
       childrenOf[n.parentId].push(n.id);
     }
   }
-  const weightCache = {};
-  function subtreeWeight(id) {
-    if (weightCache[id] !== undefined) return weightCache[id];
-    let w = 1;
-    for (const c of (childrenOf[id] || [])) w += subtreeWeight(c);
-    weightCache[id] = w;
-    return w;
-  }
   const orch = rawNodes.find(n => n.type === 'orchestrator');
   const cx = canvas ? canvas.width / 2 / (zoom || 1) : 500;
   const cy = canvas ? canvas.height / 2 / (zoom || 1) : 400;
@@ -729,43 +721,80 @@ function initialLayout(rawNodes, rawEdges) {
     if (!node) return;
     positioned.push({ ...node, x, y, radius: getNodeRadius(node), vx: 0, vy: 0, pinned: false });
   }
-  function layoutChildren(parentId, parentX, parentY, startAngle, arcSpan, depth) {
-    const children = childrenOf[parentId] || [];
-    if (children.length === 0) return;
-    const ringRadius = 120 + depth * 90 + Math.sqrt(children.length) * 20;
-    const totalWeight = children.reduce((s, cid) => s + subtreeWeight(cid), 0);
-    let currentAngle = startAngle;
-    for (const childId of children) {
-      const w = subtreeWeight(childId);
-      const childArc = (w / totalWeight) * arcSpan;
-      const angle = currentAngle + childArc / 2;
-      const x = parentX + Math.cos(angle) * ringRadius;
-      const y = parentY + Math.sin(angle) * ringRadius;
-      placeNode(childId, x, y);
-      layoutChildren(childId, x, y, angle - Math.min(childArc * 1.2, Math.PI * 0.8) / 2, Math.min(childArc * 1.2, Math.PI * 0.8), depth + 1);
-      currentAngle += childArc;
+
+  // Identify "thread" children (thinking/assistant) vs "branch" children (agent/tool/user)
+  function isThreadNode(id) {
+    const n = nodeMap[id];
+    return n && (n.type === 'thinking' || n.type === 'assistant');
+  }
+
+  // Layout branches (agents, tools) radially around their parent
+  function layoutBranches(parentId, parentX, parentY, branchIds, baseAngle, depth) {
+    if (branchIds.length === 0) return;
+    const arcSpan = Math.min(Math.PI * 0.8, branchIds.length * 0.5);
+    const startAngle = baseAngle - arcSpan / 2;
+    const ringR = 130 + depth * 60;
+    for (let i = 0; i < branchIds.length; i++) {
+      const angle = startAngle + (branchIds.length > 1 ? (i / (branchIds.length - 1)) * arcSpan : 0);
+      const bx = parentX + Math.cos(angle) * ringR;
+      const by = parentY + Math.sin(angle) * ringR;
+      placeNode(branchIds[i], bx, by);
+      // Layout sub-branches (tool children of agents)
+      const subChildren = childrenOf[branchIds[i]] || [];
+      if (subChildren.length > 0) {
+        layoutBranches(branchIds[i], bx, by, subChildren, angle, depth + 1);
+      }
     }
   }
+
   if (orch) {
     placeNode(orch.id, cx, cy);
-    const children = childrenOf[orch.id] || [];
-    const agentIds = children.filter(id => nodeMap[id]?.type === 'agent');
-    const userIds = children.filter(id => nodeMap[id]?.type === 'user');
-    const otherIds = children.filter(id => !agentIds.includes(id) && !userIds.includes(id));
-    const sorted = [...agentIds, ...otherIds, ...userIds];
-    const totalWeight = sorted.reduce((s, cid) => s + subtreeWeight(cid), 0);
-    let angle = -Math.PI / 2;
-    for (const childId of sorted) {
-      if (placed.has(childId)) continue;
-      const w = subtreeWeight(childId);
-      const arc = (w / totalWeight) * Math.PI * 2;
-      const childAngle = angle + arc / 2;
-      const ringR = nodeMap[childId]?.type === 'agent' ? 200 : (nodeMap[childId]?.type === 'user' ? 180 : 160);
-      placeNode(childId, cx + Math.cos(childAngle) * ringR, cy + Math.sin(childAngle) * ringR);
-      layoutChildren(childId, cx + Math.cos(childAngle) * ringR, cy + Math.sin(childAngle) * ringR, childAngle - Math.PI * 0.3, Math.PI * 0.6, 2);
-      angle += arc;
+
+    // Walk the main thread downward from orchestrator
+    let threadX = cx;
+    let threadY = cy;
+    const threadStep = 100; // vertical spacing between thread nodes
+    let currentParent = orch.id;
+    let branchSide = 1; // alternates left/right for branches
+
+    while (true) {
+      const children = childrenOf[currentParent] || [];
+      if (children.length === 0) break;
+
+      // Separate thread continuation from branches
+      const threadChild = children.find(id => isThreadNode(id));
+      const userChildren = children.filter(id => nodeMap[id]?.type === 'user');
+      const branchChildren = children.filter(id => id !== threadChild && !userChildren.includes(id));
+
+      // Place user nodes above/to the left of orchestrator
+      if (userChildren.length > 0) {
+        const ux = threadX - 150 - userChildren.length * 30;
+        for (let i = 0; i < userChildren.length; i++) {
+          placeNode(userChildren[i], ux + i * 60, threadY - 40 + i * 30);
+        }
+      }
+
+      // Place branch children (agents, tools) to alternating sides
+      if (branchChildren.length > 0) {
+        const branchAngle = branchSide > 0 ? -Math.PI / 4 : -Math.PI * 3 / 4;
+        layoutBranches(currentParent, threadX, threadY, branchChildren, branchAngle, 1);
+        branchSide *= -1;
+      }
+
+      // Advance thread downward
+      if (threadChild) {
+        threadY += threadStep;
+        // Slight horizontal offset to avoid perfect vertical line
+        threadX += (Math.random() - 0.5) * 30;
+        placeNode(threadChild, threadX, threadY);
+        currentParent = threadChild;
+      } else {
+        break;
+      }
     }
   }
+
+  // Place any remaining unplaced nodes
   for (const n of rawNodes) {
     if (!placed.has(n.id)) placeNode(n.id, cx + (Math.random() - 0.5) * 500, cy + (Math.random() - 0.5) * 400);
   }
@@ -809,7 +838,10 @@ function applyPhysics() {
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < 1) continue;
       let targetLen = PHYSICS.edgeLength;
-      if (a.type === 'orchestrator' || other.type === 'orchestrator') targetLen = 200;
+      // Thread nodes (thinking/assistant) pull closer — tight chain
+      const isThreadEdge = (a.type === 'thinking' || a.type === 'assistant') || (other.type === 'thinking' || other.type === 'assistant');
+      if (a.type === 'orchestrator' || other.type === 'orchestrator') targetLen = 180;
+      else if (isThreadEdge) targetLen = 90;
       else if (a.type === 'agent' || other.type === 'agent') targetLen = 150;
       const force = PHYSICS.attraction * (dist - targetLen);
       fx += (dx / dist) * force; fy += (dy / dist) * force;
@@ -1040,8 +1072,9 @@ function drawNode(node, isHovered, scale) {
   }
   ctx.shadowBlur = 0;
 
-  // Draw label below node (skip for orchestrator — it has the token bar)
-  if (scale > 0.5 && node.type !== 'orchestrator') {
+  // Draw label below node (skip for types that get text bubbles and orchestrator)
+  const hasBubble = node.type === 'user' || node.type === 'thinking' || node.type === 'assistant';
+  if (scale > 0.5 && node.type !== 'orchestrator' && !hasBubble) {
     ctx.font = '11px "Segoe UI",system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.fillStyle = isHovered ? '#fff' : 'rgba(226,232,240,0.8)';
     ctx.fillText(truncText(ctx, node.label || node.type, 150), x, y + r + 5);
@@ -1062,7 +1095,6 @@ function drawHexagon(x, y, r, color, isHovered) {
 }
 
 function drawTextBubble(node) {
-  // Only draw bubbles for user, thinking, and assistant text nodes
   if (node.type !== 'user' && node.type !== 'thinking' && node.type !== 'assistant') return;
   const text = node.label || '';
   if (!text || text.length < 2) return;
@@ -1072,36 +1104,39 @@ function drawTextBubble(node) {
   ctx.shadowBlur = 0;
 
   // Bubble config by type
-  let bgColor, borderColor, textColor, headerText, headerColor;
+  let bgColor, borderColor, textColor, headerText, headerColor, glowColor;
   if (node.type === 'user') {
-    bgColor = 'rgba(245,158,11,0.12)';
-    borderColor = 'rgba(245,158,11,0.4)';
-    textColor = 'rgba(245,158,11,0.9)';
+    bgColor = 'rgba(245,158,11,0.08)';
+    borderColor = 'rgba(245,158,11,0.35)';
+    textColor = 'rgba(226,232,240,0.9)';
     headerText = 'USER';
     headerColor = 'rgba(245,158,11,1)';
+    glowColor = 'rgba(245,158,11,0.15)';
   } else if (node.type === 'thinking') {
-    bgColor = 'rgba(148,163,184,0.1)';
-    borderColor = 'rgba(148,163,184,0.3)';
-    textColor = 'rgba(148,163,184,0.85)';
+    bgColor = 'rgba(100,116,139,0.08)';
+    borderColor = 'rgba(148,163,184,0.25)';
+    textColor = 'rgba(148,163,184,0.8)';
     headerText = 'THINKING';
-    headerColor = 'rgba(148,163,184,1)';
+    headerColor = 'rgba(148,163,184,0.9)';
+    glowColor = 'rgba(148,163,184,0.08)';
   } else {
-    bgColor = 'rgba(6,182,212,0.1)';
-    borderColor = 'rgba(6,182,212,0.35)';
-    textColor = 'rgba(6,182,212,0.85)';
+    bgColor = 'rgba(6,182,212,0.08)';
+    borderColor = 'rgba(6,182,212,0.3)';
+    textColor = 'rgba(226,232,240,0.9)';
     headerText = 'CLAUDE';
     headerColor = 'rgba(6,182,212,1)';
+    glowColor = 'rgba(6,182,212,0.12)';
   }
 
   // Position bubble to the right of the node
-  const bubbleX = x + r + 14;
-  const bubbleY = y - 12;
-  const maxW = 180;
-  const padding = 8;
+  const bubbleX = x + r + 16;
+  const bubbleY = y - 18;
+  const maxW = 220;
+  const padding = 10;
 
   // Measure & wrap text
-  ctx.font = '10px "Segoe UI",system-ui,sans-serif';
-  const displayText = text.length > 80 ? text.slice(0, 77) + '...' : text;
+  ctx.font = '11px "Segoe UI",system-ui,sans-serif';
+  const displayText = text.length > 120 ? text.slice(0, 117) + '...' : text;
   const words = displayText.split(' ');
   const lines = [];
   let currentLine = '';
@@ -1115,26 +1150,38 @@ function drawTextBubble(node) {
     }
   }
   if (currentLine) lines.push(currentLine);
-  if (lines.length > 3) { lines.length = 3; lines[2] = lines[2].slice(0, -3) + '...'; }
+  if (lines.length > 4) { lines.length = 4; lines[3] = lines[3].slice(0, -3) + '...'; }
 
-  const lineH = 13;
-  const headerH = 14;
+  const lineH = 15;
+  const headerH = 18;
   const bubbleH = headerH + lines.length * lineH + padding * 2;
   const bubbleW = maxW;
 
-  // Draw bubble background
+  // Subtle glow behind bubble
+  ctx.shadowColor = glowColor; ctx.shadowBlur = 20;
   ctx.fillStyle = bgColor;
+  ctx.beginPath();
+  ctx.roundRect(bubbleX, bubbleY, bubbleW, bubbleH, 8);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Border
   ctx.strokeStyle = borderColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(bubbleX, bubbleY, bubbleW, bubbleH, 6);
-  ctx.fill();
+  ctx.roundRect(bubbleX, bubbleY, bubbleW, bubbleH, 8);
   ctx.stroke();
 
-  // Draw connecting line from node to bubble
+  // Left accent bar
+  ctx.fillStyle = headerColor;
+  ctx.beginPath();
+  ctx.roundRect(bubbleX, bubbleY, 3, bubbleH, [8, 0, 0, 8]);
+  ctx.fill();
+
+  // Connecting line from node to bubble
   ctx.strokeStyle = borderColor;
   ctx.lineWidth = 0.8;
-  ctx.setLineDash([3, 2]);
+  ctx.setLineDash([3, 3]);
   ctx.beginPath();
   ctx.moveTo(x + r + 2, y);
   ctx.lineTo(bubbleX, bubbleY + bubbleH / 2);
@@ -1142,16 +1189,16 @@ function drawTextBubble(node) {
   ctx.setLineDash([]);
 
   // Header
-  ctx.font = 'bold 8px "Segoe UI",system-ui,sans-serif';
+  ctx.font = 'bold 9px "Segoe UI",system-ui,sans-serif';
   ctx.fillStyle = headerColor;
   ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-  ctx.fillText(headerText, bubbleX + padding, bubbleY + padding);
+  ctx.fillText(headerText, bubbleX + padding + 4, bubbleY + padding);
 
   // Body text
-  ctx.font = '10px "Segoe UI",system-ui,sans-serif';
+  ctx.font = '11px "Segoe UI",system-ui,sans-serif';
   ctx.fillStyle = textColor;
   for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i], bubbleX + padding, bubbleY + padding + headerH + i * lineH);
+    ctx.fillText(lines[i], bubbleX + padding + 4, bubbleY + padding + headerH + i * lineH);
   }
 
   ctx.restore();

@@ -145,7 +145,6 @@ export function parseJsonlFile(filePath: string): ParsedSession {
   let totalOutputTokens = 0;
   let startTime: string | undefined;
   const nodeCounter = { v: 0 };
-  let lastNodeId: string | null = null;
 
   const orchestratorId = `orch_${sessionId.slice(0, 8)}`;
   nodes.push({
@@ -157,6 +156,9 @@ export function parseJsonlFile(filePath: string): ParsedSession {
     status: 'running'
   });
 
+  // threadHead tracks the sequential conversation chain flowing from the orchestrator
+  let threadHead: string = orchestratorId;
+
   for (const line of lines) {
     let entry: JsonlEntry;
     try { entry = JSON.parse(line); } catch { continue; }
@@ -165,21 +167,59 @@ export function parseJsonlFile(filePath: string): ParsedSession {
     if (!startTime && ts) { startTime = ts; }
     const nodeId = `n_${nodeCounter.v++}`;
 
+    // ── User messages: feed into orchestrator as inputs ──
     if (entry.type === 'user') {
       const textContent = extractTextContent(entry.message?.content);
       const truncated = textContent.length > 80 ? textContent.slice(0, 77) + '...' : textContent;
-      nodes.push({ id: nodeId, type: 'user', label: truncated, detail: textContent, timestamp: ts });
+      nodes.push({ id: nodeId, type: 'user', label: truncated, detail: textContent, timestamp: ts, parentId: orchestratorId });
       edges.push({ from: nodeId, to: orchestratorId });
-      lastNodeId = orchestratorId;
+      // Don't change threadHead — the output thread continues from its current position
     }
 
+    // ── Assistant responses: build the sequential thread ──
     if (entry.type === 'assistant') {
       const contentBlocks = entry.message?.content;
       if (Array.isArray(contentBlocks)) {
+        // Anchor: where tool/agent branches connect FROM within this entry
+        let anchor = threadHead;
+
+        // 1. Process thinking blocks — these advance the thread
         for (const block of contentBlocks) {
-          // Tool calls
+          if (block.type === 'thinking' && (block.thinking || block.text)) {
+            const thinkText = block.thinking || block.text || '';
+            const truncated = thinkText.length > 100 ? thinkText.slice(0, 97) + '...' : thinkText;
+            const thinkNodeId = `n_${nodeCounter.v++}`;
+            nodes.push({
+              id: thinkNodeId, type: 'thinking', label: truncated,
+              detail: thinkText, timestamp: ts, parentId: threadHead,
+            });
+            edges.push({ from: threadHead, to: thinkNodeId });
+            threadHead = thinkNodeId;
+            anchor = thinkNodeId;
+          }
+        }
+
+        // 2. Process text blocks — combine into one assistant node, advances thread
+        const textParts: string[] = [];
+        for (const block of contentBlocks) {
+          if (block.type === 'text' && block.text) { textParts.push(block.text); }
+        }
+        const combinedText = textParts.join(' ').trim();
+        if (combinedText.length > 20) {
+          const truncated = combinedText.length > 120 ? combinedText.slice(0, 117) + '...' : combinedText;
+          const textNodeId = `n_${nodeCounter.v++}`;
+          nodes.push({
+            id: textNodeId, type: 'assistant', label: truncated,
+            detail: combinedText, timestamp: ts, parentId: threadHead,
+          });
+          edges.push({ from: threadHead, to: textNodeId });
+          threadHead = textNodeId;
+          anchor = textNodeId;
+        }
+
+        // 3. Process tool_use blocks — branch from anchor (don't advance thread)
+        for (const block of contentBlocks) {
           if (block.type === 'tool_use' && block.name) {
-            // Task/Agent → subagent spawn
             if (block.name === 'Task' || block.name === 'Agent') {
               const input = block.input as Record<string, unknown>;
               const agId = (input?.agentId as string) || block.id || `task_${nodeCounter.v}`;
@@ -189,39 +229,13 @@ export function parseJsonlFile(filePath: string): ParsedSession {
                 agentIds.add(agId);
                 nodes.push({
                   id: `agent_${agId}`, type: 'agent', label: truncType, detail: agType,
-                  timestamp: ts, agentId: agId, agentType: truncType, status: 'running', parentId: orchestratorId,
+                  timestamp: ts, agentId: agId, agentType: truncType, status: 'running', parentId: anchor,
                 });
-                edges.push({ from: orchestratorId, to: `agent_${agId}` });
+                edges.push({ from: anchor, to: `agent_${agId}` });
               }
             } else {
-              processToolBlock(block, ts, lastNodeId || orchestratorId, 'orchestrator', orchestratorId,
+              processToolBlock(block, ts, anchor, 'orchestrator', orchestratorId,
                 nodes, edges, touchedFiles, nodeCounter);
-            }
-          }
-
-          // Thinking blocks
-          if (block.type === 'thinking' && (block.thinking || block.text)) {
-            const thinkText = block.thinking || block.text || '';
-            const truncated = thinkText.length > 100 ? thinkText.slice(0, 97) + '...' : thinkText;
-            const thinkNodeId = `n_${nodeCounter.v++}`;
-            nodes.push({
-              id: thinkNodeId, type: 'thinking', label: truncated,
-              detail: thinkText, timestamp: ts, parentId: lastNodeId || orchestratorId,
-            });
-            edges.push({ from: lastNodeId || orchestratorId, to: thinkNodeId });
-          }
-
-          // Assistant text mentioning agent spawns
-          if (block.type === 'text' && block.text) {
-            const agentMatch = block.text.match(/launch(?:ed|ing)?\s+(\d+)\s+(?:parallel\s+)?(?:research\s+)?agents?/i);
-            if (agentMatch) {
-              const blockNodeId = `n_${nodeCounter.v++}`;
-              nodes.push({
-                id: blockNodeId, type: 'assistant', label: block.text.slice(0, 120),
-                detail: block.text, timestamp: ts, parentId: orchestratorId,
-              });
-              edges.push({ from: orchestratorId, to: blockNodeId });
-              lastNodeId = blockNodeId;
             }
           }
         }
@@ -234,7 +248,7 @@ export function parseJsonlFile(filePath: string): ParsedSession {
       }
     }
 
-    // Subagent entries
+    // ── Subagent entries ──
     if (entry.type === 'agent' || (entry.agentId && entry.type !== 'assistant')) {
       const agId = entry.agentId || `agent_${nodeCounter.v}`;
       if (!agentIds.has(agId)) {
@@ -243,9 +257,9 @@ export function parseJsonlFile(filePath: string): ParsedSession {
         nodes.push({
           id: `agent_${agId}`, type: 'agent', label: `Agent: ${agLabel}`,
           detail: JSON.stringify(entry, null, 2), timestamp: ts, agentId: agId,
-          agentType: agLabel, status: 'running', parentId: orchestratorId,
+          agentType: agLabel, status: 'running', parentId: threadHead,
         });
-        edges.push({ from: orchestratorId, to: `agent_${agId}` });
+        edges.push({ from: threadHead, to: `agent_${agId}` });
       }
     }
   }

@@ -2,7 +2,7 @@
   "name": "agent-flow",
   "displayName": "Agent Flow",
   "description": "Real-time visualization of Claude Code multi-agent workflows",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "queuebuster",
   "engines": {
     "vscode": "^1.85.0"
